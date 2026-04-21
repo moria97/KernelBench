@@ -181,13 +181,35 @@ def query_server(
         else:
             # Standard models support temperature and top_p
             completion_kwargs["temperature"] = temperature
-            completion_kwargs["top_p"] = top_p
-            
-            # top_k is not supported by OpenAI models
-            if "openai/" not in model_name.lower() and "gpt" not in model_name.lower():
-                completion_kwargs["top_k"] = top_k
+
+            is_anthropic = "anthropic" in model_name.lower() or "claude" in model_name.lower()
+            # Anthropic (incl. Bedrock aws.claude-*) rejects temperature+top_p together — only send temperature
+            if not is_anthropic:
+                completion_kwargs["top_p"] = top_p
+
+                # top_k is not supported by OpenAI models
+                if "openai/" not in model_name.lower() and "gpt" not in model_name.lower():
+                    completion_kwargs["top_k"] = top_k
         
-        response = completion(**completion_kwargs)
+        # Retry on any error except 401 (auth): 30 attempts, random 10-30s interval
+        max_retries = 30
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = completion(**completion_kwargs)
+                break
+            except Exception as e:
+                status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+                is_auth_error = status == 401 or "401" in str(e) or "authentication" in str(e).lower() or "unauthorized" in str(e).lower()
+                if is_auth_error:
+                    print(f"Auth error (401) for model {model_name}, not retrying: {e}")
+                    raise
+                if attempt >= max_retries:
+                    print(f"Error persisted after {max_retries} retries for model {model_name}, giving up: {e}")
+                    raise
+                sleep_time = random.uniform(10, 30)
+                print(f"Error for model {model_name}, attempt {attempt + 1}/{max_retries}, sleeping {sleep_time:.2f}s: {type(e).__name__}: {e}")
+                time.sleep(sleep_time)
         
         # output processing
         if num_completions == 1:
@@ -231,7 +253,7 @@ SERVER_PRESETS = {
     },
     "anthropic": {  # for Claude 3.7 Sonnet
         "model_name": "anthropic/claude-3-7-sonnet-20250219",
-        "temperature": 0.8,
+        "temperature": 0.2,
         "max_tokens": 8192,
     },
     "openai": {
