@@ -383,17 +383,17 @@ def _process_input_tensor(input, device, backend="cuda", precision=torch.float32
     if not isinstance(input, torch.Tensor):
         return input
 
-    # Preserve integer tensors as-is — these are typically class indices for
-    # losses like cross_entropy / nll_loss / kl_div (target labels from
-    # torch.randint(...)) or boolean masks. Casting them to a floating-point
+    # Preserve integer and boolean tensors, such as class indices for
+    # cross_entropy / nll_loss or boolean masks. Casting them to a floating-point
     # `precision` breaks dispatch for ops that require Long targets and
     # surfaces as misleading errors such as:
     #   NotImplementedError: "nll_loss_forward_reduce_cuda_kernel_2d_index"
     #     not implemented for 'Float'
-    if not input.is_floating_point():
+    if not input.is_floating_point() and not input.is_complex():
         return input.to(device=device)
 
-    # cast floating-point activations / weights to the desired precision dtype
+    # Keep the existing precision conversion for floating-point and complex
+    # tensors, including discarding the imaginary component of complex inputs.
     input_tensor = input.to(dtype=precision)
 
     return input_tensor.to(device=device)
